@@ -1,8 +1,8 @@
-# Banque en Ligne - API Backend
+# Banque en Ligne [VoltBank]- API Backend
 
 ## Description
 
-Application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
+VoltBank : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
 
 ## Fonctionnalités principales
 
