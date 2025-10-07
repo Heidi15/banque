@@ -2,7 +2,7 @@
 
 ## Description
 
-VoltBank : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
+*VoltBank* : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
 
 ## Fonctionnalités principales
 
@@ -40,7 +40,7 @@ VoltBank : Une application web de gestion bancaire permettant aux utilisateurs d
 
 1. Cloner le repository
 ```bash
-git clone <url-du-repo>
+git clone <[url-du-repo](https://github.com/Heidi15/banque.git)>
 cd banque-en-ligne
 ```
 
@@ -85,4 +85,4 @@ Projet éducatif - Startup fictive de banque en ligne
 
 ## Equipe
 
-Heidi IROUDAYARADJOU / Lea CHEN / Sellia NADE
+Heidi IROUDAYARADJOU / Lea CHEN / Sellia NADE / Félicien BOURY
