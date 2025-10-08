@@ -40,7 +40,7 @@
 
 1. Cloner le repository
 ```bash
-git clone <[url-du-repo](https://github.com/Heidi15/banque.git)>
+git clone <https://github.com/Heidi15/banque.git>
 cd banque-en-ligne
 ```
 
