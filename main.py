@@ -1,10 +1,18 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel import SQLModel, Field, create_engine, Session, select, desc, Relationship
 from passlib.context import CryptContext
+from contextlib import asynccontextmanager
 from pydantic import BaseModel, EmailStr
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 import bcrypt
+import jwt
+
+# Configuration JWT
+SECRET_KEY = "cle_secret_securisee"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 300
 
 # Modèles de données
 class User(SQLModel, table=True):
@@ -35,7 +43,7 @@ class Account(SQLModel, table=True):
 class Transaction(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     amount: float
-    transaction_type: str  # "deposit", "transfer", "bonus"
+    transaction_type: str  # "deposit", "transfer"
     source_account_id: int | None = Field(default=None, foreign_key="account.id")
     destination_account_id: int | None = Field(default=None, foreign_key="account.id")
     created_at: datetime = Field(default_factory=datetime.now)
@@ -69,20 +77,50 @@ def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
 # Application FastAPI
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    yield
+    
+app = FastAPI(lifespan=lifespan)
+security = HTTPBearer()
 
 @app.get("/")
 def read_root():
     return {"message": "Bienvenue sur mon API FastAPI!"}
 
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
+# Fonctions utilitaires
+def hacher_mot_de_passe(mot_de_passe: str) -> bytes:
+    sel = bcrypt.gensalt()
+    mot_de_passe_hache = bcrypt.hashpw(mot_de_passe.encode('utf-8'), sel)
+    return mot_de_passe_hache
 
-# Routes API
+def verifier_mot_de_passe(mot_de_passe: str, mot_de_passe_hache: bytes) -> bool:
+    return bcrypt.checkpw(mot_de_passe.encode('utf-8'), mot_de_passe_hache)
+
+# Fonctions JWT
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Token invalide")
+
+# Fonction pour récupérer l'utilisateur connecté
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    payload = verify_token(token)
+    return payload.get("user_id")
+
+# Story 1 - Inscription
 @app.post("/users/")
-def create_user(emailvar: str, passwordvar: str):
-    user = User(id=0, email=emailvar, hashed_password=passwordvar)
+def create_user(email: str, password: str):
+    user = User(id=0, email=email, hashed_password=password)
     with Session(engine) as session:
         existing_user = session.exec(select(User).where(User.email == user.email)).first()
         if existing_user:
@@ -97,25 +135,79 @@ def create_user(emailvar: str, passwordvar: str):
         session.add(user)
         session.commit()
         session.refresh(user)
-        return user
+        
+        import random
+        account_number = f"FR{random.randint(10000000, 99999999)}"
+        main_account = Account(
+            account_number=account_number,
+            balance=100.0,
+            is_main=True,
+            user_id=user.id
+        )
+        session.add(main_account)
+        session.commit()
+        session.refresh(main_account)
+        
+        # Transaction bonus de 100€
+        bonus_transaction = Transaction(
+            amount=100.0,
+            transaction_type="bonus",
+            destination_account_id=main_account.id,
+            is_confirmed=True,
+            description="Bonus d'ouverture de compte principal"
+        )
+        session.add(bonus_transaction)
+        session.commit()
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email
+            },
+            "main_account": {
+                "id": main_account.id,
+                "account_number": main_account.account_number,
+                "balance": main_account.balance,
+                "is_main": main_account.is_main
+            },
+            "message": "100€ offerts !"
+        }
 
-@app.get("/users/")
-def get_users():
+# Story 2 - Connexion
+@app.post("/login/")
+def login(email: str, password: str):
     with Session(engine) as session:
-        statement = select(User)
-        users = session.exec(statement).all()
-        return users
+        user = session.exec(select(User).where(User.email == email)).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+        
+        if not verifier_mot_de_passe(password, user.hashed_password.encode('utf-8')):
+            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+        
+        token = create_access_token({"user_id": user.id, "email": user.email})
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email
+            }
+        }
 
-# Hacher un mot de passe
-def hacher_mot_de_passe(mot_de_passe: str) -> bytes:
-    # Générer un sel et hacher le mot de passe
-    sel = bcrypt.gensalt()
-    mot_de_passe_hache = bcrypt.hashpw(mot_de_passe.encode('utf-8'), sel)
-    return mot_de_passe_hache
-
-# Vérifier un mot de passe
-def verifier_mot_de_passe(mot_de_passe: str, mot_de_passe_hache: bytes) -> bool:
-    return bcrypt.checkpw(mot_de_passe.encode('utf-8'), mot_de_passe_hache)
+# Story 3 - Récupération de l'utilisateur connecté
+@app.get("/users/me/")
+def get_current_user_info(user_id: int = Depends(get_current_user)):
+    """Récupérer les informations de l'utilisateur connecté (sans le mot de passe)"""
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+        
+        # Retourner uniquement id et email (pas le mot de passe)
+        return {
+            "id": user.id,
+            "email": user.email
+        }
 
 # Story 4 - Ouvrir un compte
 @app.post("/accounts/")
@@ -294,4 +386,4 @@ def get_user_accounts(user_id: int):
     
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
