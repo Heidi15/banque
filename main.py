@@ -19,6 +19,8 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     hashed_password: str
     email: str
+    first_name: str
+    last_name: str
     accounts: List["Account"] = Relationship(back_populates="user")
     beneficiaries: List["Beneficiary"] = Relationship(back_populates="user")
 
@@ -119,8 +121,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
 # Story 1 - Inscription
 @app.post("/users/")
-def create_user(email: str, password: str):
-    user = User(id=0, email=email, hashed_password=password)
+def create_user(email: str, password: str, first_name: str, last_name: str):
+    user = User(id=0, email=email, hashed_password=password, first_name=first_name, last_name=last_name)
     with Session(engine) as session:
         existing_user = session.exec(select(User).where(User.email == user.email)).first()
         if existing_user:
@@ -129,7 +131,9 @@ def create_user(email: str, password: str):
         user = User(
             id=existing_user2.id + 1 if existing_user2 else 1,
             email=user.email,
-            hashed_password=hacher_mot_de_passe(user.hashed_password).decode('utf-8')
+            hashed_password=hacher_mot_de_passe(user.hashed_password).decode('utf-8'),
+            first_name=user.first_name,
+            last_name=user.last_name
         )
 
         session.add(user)
@@ -162,7 +166,9 @@ def create_user(email: str, password: str):
         return {
             "user": {
                 "id": user.id,
-                "email": user.email
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name
             },
             "main_account": {
                 "id": main_account.id,
@@ -203,10 +209,12 @@ def get_current_user_info(user_id: int = Depends(get_current_user)):
         if not user:
             raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
         
-        # Retourner uniquement id et email (pas le mot de passe)
+        # Retourner id, email, prénom et nom (pas le mot de passe)
         return {
             "id": user.id,
-            "email": user.email
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name
         }
 
 # Story 4 - Ouvrir un compte
@@ -350,8 +358,25 @@ def transfer_money(
         
         return {
             "message": "Virement effectué avec succès",
-            "source_account": source_account,
-            "destination_account": destination_account,
+            "source_account": {
+                "id": source_account.id,
+                "account_number": source_account.account_number,
+                "balance": source_account.balance,
+                "user": {
+                    "id": source_account.user.id,
+                    "first_name": source_account.user.first_name,
+                    "last_name": source_account.user.last_name
+                }
+            },
+            "destination_account": {
+                "id": destination_account.id,
+                "account_number": destination_account.account_number,
+                "user": {
+                    "id": destination_account.user.id,
+                    "first_name": destination_account.user.first_name,
+                    "last_name": destination_account.user.last_name
+                }
+            },
             "transaction": transaction
         }
 
