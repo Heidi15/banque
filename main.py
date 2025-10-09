@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel import SQLModel, Field, create_engine, Session, select, desc, Relationship
 from passlib.context import CryptContext
@@ -8,13 +8,22 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 import bcrypt
 import jwt
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # Configuration JWT
 SECRET_KEY = "cle_secret_securisee"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300
 
+# Constantes
+SECONDARY_ACCOUNT_MAX_BALANCE = 50000.0
+
 # Modèles de données
+class BeneficiaryCreate(BaseModel):
+    name: str
+    account_number: str
+
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     hashed_password: str
@@ -23,6 +32,7 @@ class User(SQLModel, table=True):
     last_name: str
     accounts: List["Account"] = Relationship(back_populates="user")
     beneficiaries: List["Beneficiary"] = Relationship(back_populates="user")
+    isclosed: bool
 
 class Account(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -45,7 +55,7 @@ class Account(SQLModel, table=True):
 class Transaction(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     amount: float
-    transaction_type: str  # "deposit", "transfer"
+    transaction_type: str  # "deposit", "transfer", "auto_transfer"
     source_account_id: int | None = Field(default=None, foreign_key="account.id")
     destination_account_id: int | None = Field(default=None, foreign_key="account.id")
     created_at: datetime = Field(default_factory=datetime.now)
@@ -66,8 +76,15 @@ class Beneficiary(SQLModel, table=True):
     name: str
     account_number: str
     user_id: int = Field(foreign_key="user.id")
-    added_at: datetime = Field(default_factory=datetime.now)
-    user: Optional[User] = Relationship(back_populates="beneficiaries")
+    added_at: datetime | None = Field(default_factory=datetime.now)
+    #source_user: User
+    user: User = Relationship(back_populates="beneficiaries")
+    '''
+    name = user_beneficiary.email,
+    account_number= destination_account_number,
+    user_id= user_beneficiary.id,
+    user = user_sourceb
+    '''
 
 # Configuration de la base
 DATABASE_URL = "sqlite:///database.db"
@@ -78,18 +95,97 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
+# Fonction Cron Job - Transfert automatique des excédents
+def transfer_excess_from_secondary_accounts():
+    """
+    Tâche planifiée qui s'exécute tous les jours pour transférer
+    le surplus des comptes secondaires vers les comptes principaux
+    """
+    print(f"[CRON JOB] Démarrage du transfert automatique des excédents - {datetime.now()}")
+    
+    with Session(engine) as session:
+        # Récupérer tous les comptes secondaires (non principaux et non clôturés)
+        secondary_accounts = session.exec(
+            select(Account).where(
+                Account.is_main == False,
+                Account.is_closed == False,
+                Account.balance > SECONDARY_ACCOUNT_MAX_BALANCE
+            )
+        ).all()
+        
+        transfers_count = 0
+        
+        for account in secondary_accounts:
+            excess_amount = account.balance - SECONDARY_ACCOUNT_MAX_BALANCE
+            
+            if excess_amount > 0:
+                # Trouver le compte principal de l'utilisateur
+                main_account = session.exec(
+                    select(Account).where(
+                        Account.user_id == account.user_id,
+                        Account.is_main == True,
+                        Account.is_closed == False
+                    )
+                ).first()
+                
+                if main_account:
+                    # Effectuer le transfert
+                    account.balance = SECONDARY_ACCOUNT_MAX_BALANCE
+                    main_account.balance += excess_amount
+                    
+                    # Créer une transaction
+                    auto_transaction = Transaction(
+                        amount=excess_amount,
+                        transaction_type="auto_transfer",
+                        source_account_id=account.id,
+                        destination_account_id=main_account.id,
+                        is_confirmed=True,
+                        description=f"Transfert automatique de l'excédent vers le compte principal (plafond 50 000€)"
+                    )
+                    session.add(auto_transaction)
+                    transfers_count += 1
+                    
+                    print(f"[CRON JOB] Transfert de {excess_amount}€ du compte {account.account_number} vers {main_account.account_number}")
+        
+        session.commit()
+        print(f"[CRON JOB] Terminé - {transfers_count} transfert(s) effectué(s)")
+
+# Config du scheduler
+scheduler = BackgroundScheduler()
+
 # Application FastAPI
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
+    
+    # Démarrer le scheduler
+    scheduler.add_job(
+        transfer_excess_from_secondary_accounts,
+        CronTrigger(hour=23, minute=59),  # Tous les jours à 23h59
+        id="transfer_excess_job",
+        name="Transfert automatique des excédents vers compte principal",
+        replace_existing=True
+    )
+    scheduler.start()
+    print("[SCHEDULER] Tâche planifiée activée - Transfert automatique quotidien à 23h59")
+    
     yield
     
-app = FastAPI(lifespan=lifespan)
+    # Arrêter le scheduler proprement
+    scheduler.shutdown()
+    print("[SCHEDULER] Arrêt du scheduler")
+    
+app = FastAPI(
+    title="VoltBank API",
+    description="API de la banque en ligne VoltBank",
+    version="1.0.0",
+    lifespan=lifespan
+)
 security = HTTPBearer()
 
 @app.get("/")
 def read_root():
-    return {"message": "Bienvenue sur mon API FastAPI!"}
+    return {"message": "Bienvenue sur l'API VoltBank!"}
 
 # Fonctions utilitaires
 def hacher_mot_de_passe(mot_de_passe: str) -> bytes:
@@ -133,13 +229,15 @@ def create_user(email: str, password: str, first_name: str, last_name: str):
             email=user.email,
             hashed_password=hacher_mot_de_passe(user.hashed_password).decode('utf-8'),
             first_name=user.first_name,
-            last_name=user.last_name
+            last_name=user.last_name,
+            isclosed=False
         )
 
         session.add(user)
         session.commit()
         session.refresh(user)
-        
+
+        # Story 11 - Création du compte principal
         import random
         account_number = f"FR{random.randint(10000000, 99999999)}"
         main_account = Account(
@@ -168,7 +266,8 @@ def create_user(email: str, password: str, first_name: str, last_name: str):
                 "id": user.id,
                 "email": user.email,
                 "first_name": user.first_name,
-                "last_name": user.last_name
+                "last_name": user.last_name,
+                "isclosed": user.isclosed
             },
             "main_account": {
                 "id": main_account.id,
@@ -178,6 +277,16 @@ def create_user(email: str, password: str, first_name: str, last_name: str):
             },
             "message": "100€ offerts !"
         }
+
+# Story 12 - Supprimer un utilisateur
+@app.post("/delete_user/")
+def delete_user(user_id: int = Depends(get_current_user)):
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.id == user_id)).first()
+        user.isclosed = True
+        session.commit()
+        session.refresh(user)
+    return "L'utilisateur a été supprimé."
 
 # Story 2 - Connexion
 @app.post("/login/")
@@ -189,6 +298,9 @@ def login(email: str, password: str):
         
         if not verifier_mot_de_passe(password, user.hashed_password.encode('utf-8')):
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+        
+        if user.isclosed:
+            return "L'utilisateur a été supprimé."
         
         token = create_access_token({"user_id": user.id, "email": user.email})
         return {
@@ -246,16 +358,34 @@ def create_account(user_id: int):
             is_main=len(user_accounts) == 0,  # Premier compte = compte principal
             user_id=user_id
         )
+        
         session.add(new_account)
         session.commit()
         session.refresh(new_account)
         return new_account
 
+# Story 5 - Voir les informations d'un compte
+@app.get("/accounts/{account_id}/")
+def get_account_info(account_id: int):
+    """Récupérer les informations d'un compte"""
+    with Session(engine) as session:
+        account = session.get(Account, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Compte non trouvé")
+        
+        return {
+            "id": account.id,
+            "account_number": account.account_number,
+            "balance": account.balance,
+            "is_main": account.is_main,
+            "is_closed": account.is_closed,
+            "created_at": account.created_at
+        }
+
 # Story 6 - Déposer de l'argent
 @app.post("/accounts/{account_id}/deposit/")
 def deposit_money(account_id: int, amount: float):
     """Déposer de l'argent sur un compte"""
-    # Vérifier que le montant est positif
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Le montant doit être positif")
     
@@ -264,15 +394,13 @@ def deposit_money(account_id: int, amount: float):
         raise HTTPException(status_code=400, detail="Dépôt limité à 1999€ maximum")
     
     with Session(engine) as session:
-        # Récupérer le compte
         account = session.get(Account, account_id)
         if not account:
             raise HTTPException(status_code=404, detail="Compte non trouvé")
         
-        # Mettre à jour le solde
         account.balance += amount
         
-        # Créer une transaction pour tracer l'opération
+        # Créer une transaction
         transaction = Transaction(
             amount=amount,
             transaction_type="deposit",
@@ -283,11 +411,21 @@ def deposit_money(account_id: int, amount: float):
         session.commit()
         session.refresh(account)
         
-        return {
+        warning_message = None
+        if not account.is_main and account.balance > SECONDARY_ACCOUNT_MAX_BALANCE:
+            excess = account.balance - SECONDARY_ACCOUNT_MAX_BALANCE
+            warning_message = f"Attention : Le solde de votre compte secondaire dépasse 50 000€. L'excédent de {excess:.2f}€ sera automatiquement transféré vers votre compte principal à la fin de la journée."
+        
+        response = {
             "message": "Dépôt effectué avec succès",
             "account": account,
             "transaction": transaction
         }
+        
+        if warning_message:
+            response["warning"] = warning_message
+        
+        return response
 
 # Story 7 - Envoyer de l'argent
 @app.post("/accounts/{source_account_id}/transfer/")
@@ -297,32 +435,26 @@ def transfer_money(
     amount: float
 ):
     """Transférer de l'argent vers un autre compte"""
-    # Vérifier que le montant est positif
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Le montant doit être positif")
     
     with Session(engine) as session:
-        # Récupérer le compte source
         source_account = session.get(Account, source_account_id)
         if not source_account:
             raise HTTPException(status_code=404, detail="Compte source non trouvé")
         
-        # Récupérer le compte destinataire
         destination_account = session.exec(
             select(Account).where(Account.account_number == destination_account_number)
         ).first()
         if not destination_account:
             raise HTTPException(status_code=404, detail="Compte destinataire non trouvé")
         
-        # Vérifier que les comptes sont différents
         if destination_account.id == source_account_id:
             raise HTTPException(status_code=400, detail="Le compte destinataire doit être différent du compte source")
         
-        # Vérifier que le compte source a assez d'argent
         if source_account.balance < amount:
             raise HTTPException(status_code=400, detail="Solde insuffisant")
         
-        # Vérifier le plafond journalier de 10000€
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_transfers = session.exec(
             select(Transaction).where(
@@ -339,11 +471,9 @@ def transfer_money(
                 detail=f"Plafond journalier de 10000€ dépassé. Déjà utilisé aujourd'hui: {total_today}€"
             )
         
-        # Effectuer le transfert
         source_account.balance -= amount
         destination_account.balance += amount
         
-        # Créer une transaction pour tracer l'opération
         transaction = Transaction(
             amount=amount,
             transaction_type="transfer",
@@ -351,6 +481,29 @@ def transfer_money(
             destination_account_id=destination_account.id,
             description=f"Virement vers {destination_account_number}"
         )
+
+        statement = select(Beneficiary)
+        beneficiarys = session.exec(statement).all()
+        taille = len(beneficiarys) + 1
+
+        statement = select(User).where(User.id == source_account_id)
+        user_source = session.exec(statement).first()
+        statement = select(User).where(User.id == destination_account.id)
+        user_beneficiary = session.exec(statement).first()
+        new_beneficiary = Beneficiary(
+            name=user_beneficiary.email,
+            account_number=destination_account_number,
+            user_id=user_source.id,
+            id=taille
+        )
+        
+        session.add(new_beneficiary)
+        session.commit()
+        session.refresh(new_beneficiary)
+
+        statement = select(Beneficiary)
+        beneficiarys = session.exec(statement).all()
+        
         session.add(transaction)
         session.commit()
         session.refresh(source_account)
@@ -377,26 +530,34 @@ def transfer_money(
                     "last_name": destination_account.user.last_name
                 }
             },
-            "transaction": transaction
+            "transaction": transaction,
+            "beneficiary": beneficiarys
         }
+
+# Story 8 - Voir les transactions d'un compte
+@app.get("/show_all_user_transactions/")
+def get_user_transactions(user_id: int = Depends(get_current_user)):
+    with Session(engine) as session:
+        statement = select(Transaction).where(
+            (Transaction.destination_account_id == user_id) | (Transaction.source_account_id == user_id)
+        ).order_by(desc(Transaction.created_at))
+        transactions = session.exec(statement).all()
+        return transactions
 
 # Story 9 - Voir les comptes
 @app.get("/users/{user_id}/accounts/")
 def get_user_accounts(user_id: int):
     """Récupérer tous les comptes d'un utilisateur"""
     with Session(engine) as session:
-        # Vérifier que l'utilisateur existe
         user = session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
         
-        # Récupérer les comptes triés par date de création décroissante
         accounts = session.exec(
             select(Account).where(Account.user_id == user_id)
             .order_by(desc(Account.created_at))
         ).all()
         
-        # Formater la réponse avec solde et numéro de compte
         result = []
         for account in accounts:
             result.append({
@@ -408,7 +569,146 @@ def get_user_accounts(user_id: int):
             })
         
         return result
-    
+
+# Story 10 - Annuler une transaction
+@app.post("/transactions/{transaction_id}/cancel/")
+def cancel_transaction(transaction_id: int, user_id: int = Depends(get_current_user)):
+    with Session(engine) as session:
+        transaction = session.get(Transaction, transaction_id)
+
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction non trouvée")
+
+        if transaction.is_confirmed:
+            raise HTTPException(status_code=400, detail="Une transaction confirmée ne peut pas être annulée.")
+
+        if transaction.is_cancelled:
+            return {"message": "La transaction a déjà été annulée."}
+        
+        time_limit = timedelta(seconds=20)
+        if datetime.now() - transaction.created_at > time_limit:
+            raise HTTPException(status_code=400, detail="Le délai de 20 secondes pour annuler cette transaction est dépassé.")
+            
+        source_account = session.get(Account, transaction.source_account_id)
+        destination_account = session.get(Account, transaction.destination_account_id)
+
+        if transaction.transaction_type == "deposit" or transaction.transaction_type == "bonus":
+            raise HTTPException(status_code=403, detail="Seules les transactions de virement (transfer) peuvent être annulées par l'utilisateur source.")
+
+        if transaction.source_account_id != user_id:
+            return {"message": "Vous n'êtes pas originaire de la transaction."}
+        
+        before_transaction_source = source_account.balance
+        before_transaction_destination = destination_account.balance
+        source_account.balance += transaction.amount
+        destination_account.balance -= transaction.amount
+        transaction.is_cancelled = True
+        
+        return {
+            "before_transaction_source": before_transaction_source,
+            "before_transaction_destination": before_transaction_destination,
+            "message": "Transaction annulée avec succès. Les comptes ont été mis à jour.",
+            "transaction_id": transaction.id,
+            "new_source_balance": source_account.balance,
+            "new_destination_balance": destination_account.balance
+        }
+
+# Story 13 - Voir le détail d'une transaction
+@app.get("/show_transaction/")
+def show_transaction(transaction_id: int, user_id: int = Depends(get_current_user)):
+    with Session(engine) as session:
+        statement = select(Transaction).where(Transaction.id == transaction_id)
+        transaction = session.exec(statement).first()
+        if transaction == None:
+            return {"La transaction n'existe pas."}
+        if transaction.source_account_id != user_id and transaction.destination_account_id != user_id:
+            return {"Vous n'êtes pas destinataire ou originaire de la transaction."}
+    return transaction
+
+# Story 14 - Ajouter un bénéficiaire
+@app.post("/beneficiaries/")
+def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int):
+    if not beneficiary_data.name.strip():
+        raise HTTPException(status_code=400, detail="Le nom du bénéficiaire doit être renseigné")
+
+    with Session(engine) as session:
+        destination_account = session.exec(
+            select(Account).where(Account.account_number == beneficiary_data.account_number)
+        ).first()
+        
+        if not destination_account:
+            raise HTTPException(status_code=404, detail="Le numéro de compte spécifié pour le bénéficiaire n'existe pas")
+
+        user_accounts = session.exec(
+            select(Account.account_number).where(Account.user_id == user_id)
+        ).all()
+
+        if destination_account.user_id == user_id:
+            raise HTTPException(status_code=400, detail="Vous ne pouvez pas vous ajouter vous-même comme bénéficiaire")
+
+        existing_beneficiary = session.exec(
+            select(Beneficiary).where(
+                Beneficiary.user_id == user_id,
+                Beneficiary.account_number == beneficiary_data.account_number
+            )
+        ).first()
+
+        if existing_beneficiary:
+            raise HTTPException(status_code=400, detail="Ce bénéficiaire est déjà ajouté")
+
+        new_beneficiary = Beneficiary(
+            name=beneficiary_data.name.strip(),
+            account_number=beneficiary_data.account_number,
+            user_id=user_id
+        )
+
+        session.add(new_beneficiary)
+        session.commit()
+        session.refresh(new_beneficiary)
+        
+        return {
+            "message": "Bénéficiaire ajouté avec succès",
+            "beneficiary": {
+                "id": new_beneficiary.id,
+                "name": new_beneficiary.name,
+                "account_number": new_beneficiary.account_number,
+                "added_at": new_beneficiary.added_at
+            }
+        }
+
+# Story 15 - Voir les bénéficiaires
+@app.get("/user_beneficiaries/")
+def get_user_beneficiaries(user_id: int = Depends(get_current_user)):
+    with Session(engine) as session:
+        statement = select(Beneficiary).where(Beneficiary.user_id == user_id)
+        beneficiary = session.exec(statement).all()
+        return beneficiary
+
+# Endpoints utilitaires
+@app.get("/users/")
+def get_users():
+    with Session(engine) as session:
+        statement = select(User)
+        users = session.exec(statement).all()
+        return users
+
+@app.get("/show_all_transactions/")
+def get_transactions():
+    with Session(engine) as session:
+        statement = select(Transaction)
+        transactions = session.exec(statement).all()
+        return transactions
+
+# Story BONUS - Endpoint manuel pour forcer l'exécution du transfert automatique (pour tests)
+@app.post("/admin/trigger-auto-transfer/")
+def trigger_auto_transfer():
+    """
+    Endpoint admin pour déclencher le transfert automatique des surplus directement à la main.
+    (Pour pas attendre le Cron Job quotidien)
+    """
+    transfer_excess_from_secondary_accounts()
+    return {"message": "Transfert automatique des excédents exécuté avec succès"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
