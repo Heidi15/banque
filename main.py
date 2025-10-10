@@ -20,10 +20,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 300
 SECONDARY_ACCOUNT_MAX_BALANCE = 50000.0
 
 # Modèles de données
-class BeneficiaryCreate(BaseModel):
-    name: str
-    account_number: str
-
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     hashed_password: str
@@ -178,7 +174,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="VoltBank API",
     description="API de la banque en ligne VoltBank",
-    version="1.0.0",
     lifespan=lifespan
 )
 security = HTTPBearer()
@@ -677,13 +672,13 @@ def show_transaction_details(transaction_id: int, user_id: int = Depends(get_cur
 
 # Story 14 - Ajouter un bénéficiaire
 @app.post("/beneficiaries/")
-def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int = Depends(get_current_user)):
-    if not beneficiary_data.name.strip():
+def add_beneficiary(name: str, account_number: str, user_id: int = Depends(get_current_user)):
+    if not name.strip():
         raise HTTPException(status_code=400, detail="Le nom du bénéficiaire doit être renseigné")
 
     with Session(engine) as session:
         destination_account = session.exec(
-            select(Account).where(Account.account_number == beneficiary_data.account_number)
+            select(Account).where(Account.account_number == account_number)
         ).first()
         
         if not destination_account:
@@ -699,7 +694,7 @@ def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int = Depends(
         existing_beneficiary = session.exec(
             select(Beneficiary).where(
                 Beneficiary.user_id == user_id,
-                Beneficiary.account_number == beneficiary_data.account_number
+                Beneficiary.account_number == account_number
             )
         ).first()
 
@@ -707,8 +702,8 @@ def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int = Depends(
             raise HTTPException(status_code=400, detail="Ce bénéficiaire est déjà ajouté")
 
         new_beneficiary = Beneficiary(
-            name=beneficiary_data.name.strip(),
-            account_number=beneficiary_data.account_number,
+            name=name.strip(),
+            account_number=account_number,
             user_id=user_id
         )
 
