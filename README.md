@@ -2,7 +2,7 @@
 
 ## Description
 
-*VoltBank* : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
+***VoltBank*** : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
 
 ## Fonctionnalités principales
 
@@ -26,7 +26,7 @@
 ### Gestion des bénéficiaires
 - Ajout de bénéficiaires pour faciliter les virements
 - Consultation de la liste des bénéficiaires
-- Détails complets (nom, IBAN, date d'ajout)
+- Détails complets (nom, numéro de compte, date d'ajout)
 
 ## Stack technique
 
@@ -40,7 +40,7 @@
 
 1. Cloner le repository
 ```bash
-git clone <[url-du-repo](https://github.com/Heidi15/banque.git)>
+git clone <https://github.com/Heidi15/banque.git>
 cd banque-en-ligne
 ```
 
@@ -52,6 +52,8 @@ pip install -r requirements.txt
 3. Lancer l'application
 ```bash
 uvicorn main:app --reload
+# OU
+python main.py
 ```
 
 L'API sera accessible sur `http://localhost:8000`
@@ -78,10 +80,11 @@ Authorization: Bearer <votre_token>
 - Plafond de virement : 10 000€ par jour et par compte
 - Annulation possible dans les 5 secondes suivant une transaction
 - Le compte principal ne peut pas être clôturé
+- Plafond de 50 000€ pour les comptes secondaires avec transfert automatique (Cron Job)
 
 ## Licence
 
-Projet éducatif - Startup fictive de banque en ligne
+Projet **[VoltBank]** - Startup fictive de banque en ligne
 
 ## Equipe
 
