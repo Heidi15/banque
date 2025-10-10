@@ -331,7 +331,7 @@ def get_current_user_info(user_id: int = Depends(get_current_user)):
 
 # Story 4 - Ouvrir un compte
 @app.post("/accounts/")
-def create_account(user_id: int):
+def create_account(user_id: int = Depends(get_current_user)):
     """Créer un nouveau compte bancaire pour un utilisateur"""
     with Session(engine) as session:
         # Vérifier que l'utilisateur existe
@@ -346,10 +346,16 @@ def create_account(user_id: int):
         
         if len(user_accounts) >= 5:
             raise HTTPException(status_code=400, detail="Limite de 5 comptes atteinte")
-        
-        # Générer un numéro de compte unique
+
+        # Générer un numéro de compte unique        
         import random
-        account_number = f"FR{random.randint(10000000, 99999999)}"
+        while True:
+            account_number = f"FR{random.randint(10000000, 99999999)}"
+            existing = session.exec(
+                select(Account).where(Account.account_number == account_number)
+            ).first()
+            if not existing:
+                break
         
         # Créer le compte avec un solde de 0
         new_account = Account(
@@ -366,12 +372,16 @@ def create_account(user_id: int):
 
 # Story 5 - Voir les informations d'un compte
 @app.get("/accounts/{account_id}/")
-def get_account_info(account_id: int):
-    """Récupérer les informations d'un compte"""
+def get_account_info(account_id: int, user_id: int = Depends(get_current_user)):
+    """Récupérer les informations d'un compte (si appartient à l'utilisateur)"""
     with Session(engine) as session:
         account = session.get(Account, account_id)
         if not account:
             raise HTTPException(status_code=404, detail="Compte non trouvé")
+        
+        # Vérifier que le compte appartient à l'utilisateur connecté
+        if account.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Accès interdit : ce compte ne vous appartient pas")
         
         return {
             "id": account.id,
@@ -384,8 +394,8 @@ def get_account_info(account_id: int):
 
 # Story 6 - Déposer de l'argent
 @app.post("/accounts/{account_id}/deposit/")
-def deposit_money(account_id: int, amount: float):
-    """Déposer de l'argent sur un compte"""
+def deposit_money(account_id: int, amount: float, user_id: int = Depends(get_current_user)):
+    """Déposer de l'argent sur un de ses comptes"""
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Le montant doit être positif")
     
@@ -397,6 +407,10 @@ def deposit_money(account_id: int, amount: float):
         account = session.get(Account, account_id)
         if not account:
             raise HTTPException(status_code=404, detail="Compte non trouvé")
+        
+        # Vérifier que le compte appartient à l'utilisateur connecté
+        if account.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Accès interdit : vous ne pouvez déposer que sur vos propres comptes")
         
         account.balance += amount
         
@@ -432,7 +446,8 @@ def deposit_money(account_id: int, amount: float):
 def transfer_money(
     source_account_id: int,
     destination_account_number: str,
-    amount: float
+    amount: float,
+    user_id: int = Depends(get_current_user)
 ):
     """Transférer de l'argent vers un autre compte"""
     if amount <= 0:
@@ -442,6 +457,10 @@ def transfer_money(
         source_account = session.get(Account, source_account_id)
         if not source_account:
             raise HTTPException(status_code=404, detail="Compte source non trouvé")
+        
+        # Vérifier que le compte source (celui qui envoie) appartient à l'utilisateur connecté
+        if source_account.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Accès interdit : vous ne pouvez effectuer des virements que depuis vos propres comptes")
         
         destination_account = session.exec(
             select(Account).where(Account.account_number == destination_account_number)
@@ -482,27 +501,25 @@ def transfer_money(
             description=f"Virement vers {destination_account_number}"
         )
 
-        statement = select(Beneficiary)
-        beneficiarys = session.exec(statement).all()
-        taille = len(beneficiarys) + 1
-
-        statement = select(User).where(User.id == source_account_id)
-        user_source = session.exec(statement).first()
-        statement = select(User).where(User.id == destination_account.id)
-        user_beneficiary = session.exec(statement).first()
-        new_beneficiary = Beneficiary(
-            name=user_beneficiary.email,
-            account_number=destination_account_number,
-            user_id=user_source.id,
-            id=taille
-        )
+        # Ajout automatique du bénéficiaire
+        # Vérifier si le bénéficiaire n'existe pas déjà
+        existing_beneficiary = session.exec(
+            select(Beneficiary).where(
+                Beneficiary.user_id == user_id,
+                Beneficiary.account_number == destination_account_number
+            )
+        ).first()
         
-        session.add(new_beneficiary)
-        session.commit()
-        session.refresh(new_beneficiary)
-
-        statement = select(Beneficiary)
-        beneficiarys = session.exec(statement).all()
+        if not existing_beneficiary and destination_account.user_id != user_id:
+            # Récupérer l'utilisateur destinataire
+            destination_user = session.get(User, destination_account.user_id)
+            
+            new_beneficiary = Beneficiary(
+                name=f"{destination_user.first_name} {destination_user.last_name}",
+                account_number=destination_account_number,
+                user_id=user_id
+            )
+            session.add(new_beneficiary)
         
         session.add(transaction)
         session.commit()
@@ -530,24 +547,37 @@ def transfer_money(
                     "last_name": destination_account.user.last_name
                 }
             },
-            "transaction": transaction,
-            "beneficiary": beneficiarys
+            "transaction": transaction
         }
 
 # Story 8 - Voir les transactions d'un compte
 @app.get("/show_all_user_transactions/")
 def get_user_transactions(user_id: int = Depends(get_current_user)):
     with Session(engine) as session:
+        # Récupérer tous les IDs des comptes de l'utilisateur
+        user_account_ids = session.exec(
+            select(Account.id).where(Account.user_id == user_id)
+        ).all()
+        
+        if not user_account_ids:
+            return []  # L'utilisateur n'a aucun compte
+        
+        # Récupérer les transactions impliquant ces comptes
         statement = select(Transaction).where(
-            (Transaction.destination_account_id == user_id) | (Transaction.source_account_id == user_id)
+            (Transaction.destination_account_id.in_(user_account_ids)) | 
+            (Transaction.source_account_id.in_(user_account_ids))
         ).order_by(desc(Transaction.created_at))
         transactions = session.exec(statement).all()
         return transactions
 
 # Story 9 - Voir les comptes
 @app.get("/users/{user_id}/accounts/")
-def get_user_accounts(user_id: int):
-    """Récupérer tous les comptes d'un utilisateur"""
+def get_user_accounts(user_id: int, current_user_id: int = Depends(get_current_user)):
+    """Récupérer tous les comptes d'un utilisateur (seulement ses propres comptes)"""
+    # Vérifier que l'utilisateur demande ses propres comptes
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Accès interdit : vous ne pouvez voir que vos propres comptes")
+    
     with Session(engine) as session:
         user = session.get(User, user_id)
         if not user:
@@ -579,6 +609,11 @@ def cancel_transaction(transaction_id: int, user_id: int = Depends(get_current_u
         if not transaction:
             raise HTTPException(status_code=404, detail="Transaction non trouvée")
 
+        # Récupérer les IDs des comptes de l'utilisateur
+        user_account_ids = session.exec(
+            select(Account.id).where(Account.user_id == user_id)
+        ).all()
+
         if transaction.is_confirmed:
             raise HTTPException(status_code=400, detail="Une transaction confirmée ne peut pas être annulée.")
 
@@ -593,16 +628,15 @@ def cancel_transaction(transaction_id: int, user_id: int = Depends(get_current_u
         destination_account = session.get(Account, transaction.destination_account_id)
 
         if transaction.transaction_type == "deposit" or transaction.transaction_type == "bonus":
-            raise HTTPException(status_code=403, detail="Seules les transactions de virement (transfer) peuvent être annulées par l'utilisateur source.")
-
-        if transaction.source_account_id != user_id:
-            return {"message": "Vous n'êtes pas originaire de la transaction."}
+            raise HTTPException(status_code=403, detail="Seules les transactions de virement (transfer) peuvent être annulées par l'utilisateur.")
         
         before_transaction_source = source_account.balance
         before_transaction_destination = destination_account.balance
         source_account.balance += transaction.amount
         destination_account.balance -= transaction.amount
         transaction.is_cancelled = True
+        
+        session.commit()
         
         return {
             "before_transaction_source": before_transaction_source,
@@ -614,20 +648,36 @@ def cancel_transaction(transaction_id: int, user_id: int = Depends(get_current_u
         }
 
 # Story 13 - Voir le détail d'une transaction
-@app.get("/show_transaction/")
-def show_transaction(transaction_id: int, user_id: int = Depends(get_current_user)):
+@app.get("/show_transaction_details/")
+def show_transaction_details(transaction_id: int, user_id: int = Depends(get_current_user)):
     with Session(engine) as session:
-        statement = select(Transaction).where(Transaction.id == transaction_id)
-        transaction = session.exec(statement).first()
-        if transaction == None:
-            return {"La transaction n'existe pas."}
-        if transaction.source_account_id != user_id and transaction.destination_account_id != user_id:
-            return {"Vous n'êtes pas destinataire ou originaire de la transaction."}
-    return transaction
+        # Récupérer la transaction
+        transaction = session.get(Transaction, transaction_id)
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction non trouvée")
+        
+        # Récupérer tous les IDs des comptes de l'utilisateur
+        user_account_ids = session.exec(
+            select(Account.id).where(Account.user_id == user_id)
+        ).all()
+        
+        # Vérifier que l'utilisateur est dans la transaction
+        is_authorized = (
+            transaction.source_account_id in user_account_ids or 
+            transaction.destination_account_id in user_account_ids
+        )
+        
+        if not is_authorized:
+            raise HTTPException(
+                status_code=403, 
+                detail="Vous n'êtes pas autorisé à voir cette transaction"
+            )
+    
+        return transaction
 
 # Story 14 - Ajouter un bénéficiaire
 @app.post("/beneficiaries/")
-def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int):
+def add_beneficiary(beneficiary_data: BeneficiaryCreate, user_id: int = Depends(get_current_user)):
     if not beneficiary_data.name.strip():
         raise HTTPException(status_code=400, detail="Le nom du bénéficiaire doit être renseigné")
 
@@ -684,30 +734,19 @@ def get_user_beneficiaries(user_id: int = Depends(get_current_user)):
         beneficiary = session.exec(statement).all()
         return beneficiary
 
-# Endpoints utilitaires
-@app.get("/users/")
-def get_users():
-    with Session(engine) as session:
-        statement = select(User)
-        users = session.exec(statement).all()
-        return users
-
-@app.get("/show_all_transactions/")
-def get_transactions():
-    with Session(engine) as session:
-        statement = select(Transaction)
-        transactions = session.exec(statement).all()
-        return transactions
-
-# Story BONUS - Endpoint manuel pour forcer l'exécution du transfert automatique (pour tests)
-@app.post("/admin/trigger-auto-transfer/")
-def trigger_auto_transfer():
+# Story BONUS - Gestion du plafond des comptes secondaires
+@app.post("/trigger-auto-transfer/")
+def trigger_auto_transfer(user_id: int = Depends(get_current_user)):
     """
-    Endpoint admin pour déclencher le transfert automatique des surplus directement à la main.
-    (Pour pas attendre le Cron Job quotidien)
+    Endpoint pour déclencher le transfert auto des surplus manuellement.
+    (Pour ne pas attendre le Cron Job quotidien)
     """
     transfer_excess_from_secondary_accounts()
-    return {"message": "Transfert automatique des excédents exécuté avec succès"}
+    return {
+        "message": "Transfert automatique des excédents exécuté avec succès",
+        "executed_by_user": user_id,
+        "executed_at": datetime.now()
+    }
 
 if __name__ == "__main__":
     import uvicorn
