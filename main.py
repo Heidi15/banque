@@ -95,7 +95,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
-# Fonction Cron Job - Transfert automatique des excédents
+# Fonction Cron Job - Transfert automatique des surplus
 def transfer_excess_from_secondary_accounts():
     """
     Tâche planifiée qui s'exécute tous les jours pour transférer
@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Arrêter le scheduler proprement
+    # Arrêter le scheduler
     scheduler.shutdown()
     print("[SCHEDULER] Arrêt du scheduler")
     
@@ -315,7 +315,7 @@ def login(email: str, password: str):
 # Story 3 - Récupération de l'utilisateur connecté
 @app.get("/users/me/")
 def get_current_user_info(user_id: int = Depends(get_current_user)):
-    """Récupérer les informations de l'utilisateur connecté (sans le mot de passe)"""
+    """Récupérer les informations de l'utilisateur connecté (sans le mdp)"""
     with Session(engine) as session:
         user = session.get(User, user_id)
         if not user:
@@ -370,7 +370,7 @@ def create_account(user_id: int = Depends(get_current_user)):
         session.refresh(new_account)
         return new_account
 
-# Story 5 - Voir les informations d'un compte
+# Story 5 - Voir les infos d'un compte
 @app.get("/accounts/{account_id}/")
 def get_account_info(account_id: int, user_id: int = Depends(get_current_user)):
     """Récupérer les informations d'un compte (si appartient à l'utilisateur)"""
@@ -560,7 +560,7 @@ def get_user_transactions(user_id: int = Depends(get_current_user)):
         ).all()
         
         if not user_account_ids:
-            return []  # L'utilisateur n'a aucun compte
+            return []  # L'utilisateur n'a pas de compte
         
         # Récupérer les transactions impliquant ces comptes
         statement = select(Transaction).where(
@@ -738,7 +738,7 @@ def get_user_beneficiaries(user_id: int = Depends(get_current_user)):
 @app.post("/trigger-auto-transfer/")
 def trigger_auto_transfer(user_id: int = Depends(get_current_user)):
     """
-    Endpoint pour déclencher le transfert auto des surplus manuellement.
+    Endpoint pour déclencher manuellement le transfert auto des surplus
     (Pour ne pas attendre le Cron Job quotidien)
     """
     transfer_excess_from_secondary_accounts()
