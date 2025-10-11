@@ -37,6 +37,7 @@ class Account(SQLModel, table=True):
     is_main: bool = Field(default=False)
     is_closed: bool = Field(default=False)
     user_id: int = Field(foreign_key="user.id")
+    # Changer created_at par opened_at
     created_at: datetime = Field(default_factory=datetime.now)
     user: Optional[User] = Relationship(back_populates="accounts")
     sent_transactions: List["Transaction"] = Relationship(
@@ -303,7 +304,7 @@ def login(email: str, password: str):
             "token_type": "bearer",
             "user": {
                 "id": user.id,
-                "email": user.email
+                # "email": user.email
             }
         }
 
@@ -376,7 +377,7 @@ def get_account_info(account_id: int, user_id: int = Depends(get_current_user)):
         
         # Vérifier que le compte appartient à l'utilisateur connecté
         if account.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Accès interdit : ce compte ne vous appartient pas")
+            raise HTTPException(status_code=404, detail="Compte non trouvé")
         
         return {
             "id": account.id,
