@@ -14,22 +14,6 @@ jobs:
     name: Tests et Validation
     runs-on: ubuntu-latest
     
-    # Configuration de PostgreSQL comme service
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: finvo_user
-          POSTGRES_PASSWORD: finvo_password
-          POSTGRES_DB: finvo_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    
     steps:
       # 1. Cloner le repository
       - name: Checkout du code
