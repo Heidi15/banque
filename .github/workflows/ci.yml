@@ -1,0 +1,72 @@
+name: CI Pipeline - FINVO API
+
+# Déclencher le workflow sur push vers la branche main
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Tests et Validation
+    runs-on: ubuntu-latest
+    
+    # Configuration de PostgreSQL comme service
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: finvo_user
+          POSTGRES_PASSWORD: finvo_password
+          POSTGRES_DB: finvo_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      # 1. Cloner le repository
+      - name: Checkout du code
+        uses: actions/checkout@v4
+      
+      # 2. Configurer Python
+      - name: Configurer Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'  # Cache les dépendances pip pour accélérer
+      
+      # 3. Installer les dépendances
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # 4. Vérifier la qualité du code (optionnel mais recommandé)
+      - name: Vérifier le formatage avec black
+        run: |
+          pip install black
+          black --check . || echo "⚠️ Le code nécessite un formatage"
+        continue-on-error: true
+      
+      # 5. Lancer les tests avec pytest
+      - name: Exécuter les tests
+        env:
+          DATABASE_URL: postgresql://finvo_user:finvo_password@localhost:5432/finvo_db
+        run: |
+          pytest -v --tb=short
+      
+      # 6. Générer un rapport de couverture (optionnel)
+      - name: Générer le rapport de couverture
+        env:
+          DATABASE_URL: postgresql://finvo_user:finvo_password@localhost:5432/finvo_db
+        run: |
+          pip install pytest-cov
+          pytest --cov=. --cov-report=term-missing
+        continue-on-error: true
