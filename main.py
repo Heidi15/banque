@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 import bcrypt
 import jwt
+import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -117,7 +118,10 @@ class BeneficiaryCreate(BaseModel):
     account_number: str    
 
 # Configuration de la base
-DATABASE_URL = "sqlite:///database.db"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://finvo_user:finvo_password@db:5432/finvo_db"
+)
 engine = create_engine(DATABASE_URL)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
