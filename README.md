@@ -1,8 +1,8 @@
-# Banque en Ligne [VoltBank]- API Backend
+# Banque en Ligne [FINVO]- API Backend
 
 ## Description
 
-***VoltBank*** : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
+***FINVO*** : Une application web de gestion bancaire permettant aux utilisateurs de gérer leurs comptes, effectuer des transactions et suivre leur historique financier. Ce projet propose une API REST complète pour une banque en ligne moderne.
 
 ## Fonctionnalités principales
 
@@ -84,7 +84,7 @@ Authorization: Bearer <votre_token>
 
 ## Licence
 
-Projet **[VoltBank]** - Startup fictive de banque en ligne
+Projet **[FINVO]** - Startup fictive de banque en ligne
 
 ## Equipe
 
