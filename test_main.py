@@ -9,7 +9,6 @@ from main import User, Account, Transaction, Beneficiary
 @pytest.fixture(name="session", scope="function")
 def session_fixture():
     """Crée une base de données en mémoire pour chaque test"""
-    # Utiliser SQLite en mémoire pour les tests (plus rapide)
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -27,7 +26,6 @@ def client_fixture(session: Session):
         return session
     
     # Remplacer la dépendance de session dans l'app
-    # Note: ceci est simplifié, dans un vrai projet on utiliserait une dépendance
     from main import engine as main_engine
     import main
     
