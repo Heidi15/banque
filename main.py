@@ -216,7 +216,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://bank-react-js.vercel.app",
-        "https://bank-react-fseeosswb-sellias-projects.vercel.app",
+        "https://bank-react-px2tz22r3-sellias-projects.vercel.app",
         "http://localhost:3000",  # dev local (React)
         "http://localhost:5173",  # dev local (Vite)
     ],
