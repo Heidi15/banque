@@ -215,9 +215,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Dev local
-        "https://bank-react-fseeosswb-sellias-projects.vercel.app",  # Production Vercel
-        "https://bank-react-js.vercel.app"  # Domaine custom
+        "https://bank-react-js.vercel.app",
+        "https://bank-react-fseeosswb-sellias-projects.vercel.app",
+        "http://localhost:3000",  # dev local (React)
+        "http://localhost:5173",  # dev local (Vite)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -227,11 +228,8 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"message": "Bienvenue sur l'API FINVO!"}
-security = HTTPBearer()
 
-@app.get("/")
-def read_root():
-    return {"message": "Bienvenue sur l'API FINVO!"}
+security = HTTPBearer()
 
 # Fonctions utilitaires
 def hacher_mot_de_passe(mot_de_passe: str) -> bytes:
