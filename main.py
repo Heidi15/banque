@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel, Field, create_engine, Session, select, desc, Relationship
-from sqlalchemy import create_engine
 from passlib.context import CryptContext
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, EmailStr
