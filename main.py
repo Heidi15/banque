@@ -216,8 +216,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",  # Dev local
-        "bank-react-dskn9extm-sellias-projects.vercel.app",  # Production Vercel
-        "bank-react-js.vercel.app"  # Domaine custom
+        "bank-react-fseeosswb-sellias-projects.vercel.app",  # Production Vercel
+        "https://bank-react-js.vercel.app"  # Domaine custom
     ],
     allow_credentials=True,
     allow_methods=["*"],
