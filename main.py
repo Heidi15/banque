@@ -119,11 +119,8 @@ class BeneficiaryCreate(BaseModel):
     account_number: str    
 
 # Configuration de la base
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://finvo_user:finvo_password@db:5432/finvo_db"
-)
-engine = create_engine(DATABASE_URL)
+DATABASE_URL = os.environ["DATABASE_URL"]
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Création des tables
